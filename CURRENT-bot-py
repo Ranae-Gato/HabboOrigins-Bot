@@ -1,0 +1,775 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+import pyautogui
+import threading
+import time
+import random
+from datetime import datetime
+import sys
+import subprocess
+import json
+import os
+
+class HabboMultiboxBotGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Ranaes AFK Shop Bot")
+        self.root.geometry("1100x850")
+        self.root.resizable(True, True)
+        
+        self.config_file = "habbo_bot_config.json"
+        self.config = self.load_config()
+        self.window_coords = self.config.get('window_coords', {})
+        self.global_message_list = self.config.get('global_message_list', [".", "..", "...", "afk", "brb"])
+        self.ui_scale = self.config.get('ui_scale', 1.0)
+        self.dark_mode = self.config.get('dark_mode', False)
+        
+        self.colors = {
+            'light': {
+                'bg': '#FFFFFF', 'fg': '#000000', 'frame_bg': '#F0F0F0',
+                'label_fg': '#000000', 'button_bg': '#E0E0E0', 'button_fg': '#000000',
+                'entry_bg': '#FFFFFF', 'entry_fg': '#000000', 'text_bg': '#FFFFFF',
+                'text_fg': '#000000', 'select_bg': '#0078D7', 'select_fg': '#FFFFFF'
+            },
+            'dark': {
+                'bg': '#1E1E1E', 'fg': '#FFFFFF', 'frame_bg': '#2D2D2D',
+                'label_fg': '#FFFFFF', 'button_bg': '#404040', 'button_fg': '#FFFFFF',
+                'entry_bg': '#333333', 'entry_fg': '#FFFFFF', 'text_bg': '#1E1E1E',
+                'text_fg': '#FFFFFF', 'select_bg': '#0078D7', 'select_fg': '#FFFFFF'
+            }
+        }
+        
+        if not self.check_packages():
+            return
+        
+        self.is_running = False
+        self.bot_thread = None
+        self.habbo_windows = []
+        self.window_vars = []
+        self.expanded_windows = set()
+        
+        try:
+            import pygetwindow as gw
+            import win32gui
+            import win32con
+            self.gw = gw
+            self.win32gui = win32gui
+            self.win32con = win32con
+        except ImportError as e:
+            messagebox.showerror("Import Error", f"Failed to import packages: {e}")
+            return
+        
+        if self.ui_scale != 1.0:
+            try:
+                self.root.tk.call('tk', 'scaling', self.ui_scale)
+            except:
+                pass
+        
+        self.create_widgets()
+    
+    def load_config(self):
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+    
+    def save_config(self):
+        try:
+            config = {
+                'window_coords': self.window_coords,
+                'window_settings': {},
+                'global_message_list': self.global_message_list,
+                'global_x': self.x_var.get(),
+                'global_y': self.y_var.get(),
+                'global_delay': self.delay_var.get(),
+                'global_message': self.message_var.get(),
+                'random_mode': self.random_var.get(),
+                'ui_scale': self.scale_var.get(),
+                'dark_mode': self.dark_mode,
+                'post_msg_delay_min': self.post_msg_delay_min.get(),
+                'post_msg_delay_max': self.post_msg_delay_max.get(),
+                'post_msg_random': self.post_msg_random.get()
+            }
+            for window_info in self.habbo_windows:
+                title = window_info['title']
+                config['window_settings'][title] = {
+                    'custom_message': window_info['custom_message'].get(),
+                    'use_custom': window_info['use_custom'].get(),
+                    'delay_after_prev': window_info['delay_after_prev'].get(),
+                    'post_msg_delay_min': window_info['post_msg_delay_min'].get(),
+                    'post_msg_delay_max': window_info['post_msg_delay_max'].get(),
+                    'post_msg_random': window_info['post_msg_random'].get()
+                }
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save config: {e}")
+    
+    def load_window_settings(self, title):
+        if hasattr(self, 'config') and 'window_settings' in self.config:
+            settings = self.config['window_settings'].get(title, {})
+            return {
+                'custom_message': settings.get('custom_message', ''),
+                'use_custom': settings.get('use_custom', False),
+                'delay_after_prev': settings.get('delay_after_prev', 0),
+                'post_msg_delay_min': settings.get('post_msg_delay_min', 1.0),
+                'post_msg_delay_max': settings.get('post_msg_delay_max', 1.0),
+                'post_msg_random': settings.get('post_msg_random', False)
+            }
+        return {
+            'custom_message': '', 'use_custom': False, 'delay_after_prev': 0,
+            'post_msg_delay_min': 1.0, 'post_msg_delay_max': 1.0, 'post_msg_random': False
+        }
+    
+    def check_packages(self):
+        required_packages = ['pyautogui', 'pygetwindow', 'pywin32']
+        missing_packages = []
+        
+        for package in required_packages:
+            try:
+                if package == 'pyautogui':
+                    import pyautogui
+                elif package == 'pygetwindow':
+                    import pygetwindow
+                elif package == 'pywin32':
+                    import win32gui
+            except ImportError:
+                missing_packages.append(package)
+        
+        if missing_packages:
+            response = messagebox.askyesno(
+                "Install Packages",
+                f"Missing packages: {', '.join(missing_packages)}\n\nDo you want to install them now?"
+            )
+            if response:
+                self.install_packages(missing_packages)
+                messagebox.showinfo("Restart Required", "Please restart the application.")
+                self.root.destroy()
+                return False
+            else:
+                messagebox.showwarning("Packages Required", "The application cannot run without the required packages.")
+                self.root.destroy()
+                return False
+        return True
+    
+    def install_packages(self, packages):
+        for package in packages:
+            try:
+                if package == 'pywin32':
+                    package = 'pypiwin32'
+                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+                print(f"Successfully installed {package}")
+            except Exception as e:
+                print(f"Failed to install {package}: {e}")
+    
+    def create_widgets(self):
+        top_frame = ttk.Frame(self.root)
+        top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        
+        self.dark_mode_var = tk.BooleanVar(value=self.dark_mode)
+        self.dark_toggle = ttk.Checkbutton(
+            top_frame,
+            text="Dark Mode",
+            variable=self.dark_mode_var,
+            command=self.toggle_dark_mode
+        )
+        self.dark_toggle.pack(side=tk.LEFT, padx=(0, 20))
+        
+        ttk.Label(top_frame, text="UI Scale:").pack(side=tk.LEFT, padx=(0, 5))
+        self.scale_var = tk.DoubleVar(value=self.ui_scale)
+        scale_slider = ttk.Scale(
+            top_frame,
+            from_=0.5,
+            to=2.0,
+            orient='horizontal',
+            variable=self.scale_var,
+            length=150
+        )
+        scale_slider.pack(side=tk.LEFT, padx=(0, 5))
+        self.scale_label = ttk.Label(top_frame, text=f"{self.ui_scale:.1f}", width=4)
+        self.scale_label.pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(top_frame, text="Apply", command=self.apply_scale, width=6).pack(side=tk.LEFT)
+        
+        scale_slider.bind('<Motion>', lambda e: self.scale_label.config(text=f"{self.scale_var.get():.1f}"))
+        
+        container = ttk.Frame(self.root)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        canvas = tk.Canvas(container)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        main_container = ttk.Frame(canvas, padding="15")
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        canvas.create_window((0, 0), window=main_container, anchor="nw")
+        
+        def on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        
+        main_container.bind("<Configure>", on_configure)
+        
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        self.main_container = main_container
+        self.canvas = canvas
+        
+        title_label = ttk.Label(main_container, text="Ranaes AFK Shop Bot", font=('Arial', 16, 'bold'))
+        title_label.pack(pady=(0, 15))
+        
+        self.status_label = ttk.Label(main_container, text="Status: STOPPED", font=('Arial', 11, 'bold'), foreground='red')
+        self.status_label.pack(pady=(0, 15))
+        
+        window_frame = ttk.LabelFrame(main_container, text="Window Management", padding="10")
+        window_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        btn_frame = ttk.Frame(window_frame)
+        btn_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Button(btn_frame, text="Scan", command=self.scan_habbo_windows, width=12).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="Set Coords", command=self.set_coordinates_for_selected, width=12).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="Select All", command=self.select_all_windows, width=10).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="Deselect All", command=self.deselect_all_windows, width=10).pack(side=tk.LEFT)
+        
+        self.window_count_label = ttk.Label(window_frame, text="Detected: 0 windows")
+        self.window_count_label.pack(anchor='w', pady=(0, 5))
+        
+        list_container = ttk.Frame(window_frame)
+        list_container.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        
+        canvas2 = tk.Canvas(list_container, height=150)
+        scrollbar2 = ttk.Scrollbar(list_container, orient="vertical", command=canvas2.yview)
+        self.window_list_frame = ttk.Frame(canvas2)
+        
+        canvas2.configure(yscrollcommand=scrollbar2.set)
+        canvas2.create_window((0, 0), window=self.window_list_frame, anchor="nw")
+        
+        canvas2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar2.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        def configure_scrollregion(event):
+            canvas2.configure(scrollregion=canvas2.bbox("all"))
+        
+        self.window_list_frame.bind("<Configure>", configure_scrollregion)
+        
+        mode_frame = ttk.Frame(window_frame)
+        mode_frame.pack(fill=tk.X)
+        self.mode_var = tk.StringVar(value="selected")
+        ttk.Radiobutton(mode_frame, text="Selected Only", variable=self.mode_var, value="selected").pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Radiobutton(mode_frame, text="All Windows", variable=self.mode_var, value="all").pack(side=tk.LEFT)
+        
+        msg_frame = ttk.LabelFrame(main_container, text="Messages", padding="10")
+        msg_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(msg_frame, text="Message:").grid(row=0, column=0, sticky='w', pady=2)
+        self.message_var = tk.StringVar(value=self.config.get('global_message', '.'))
+        ttk.Entry(msg_frame, textvariable=self.message_var, width=35).grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
+        
+        ttk.Label(msg_frame, text="Post-msg delay:").grid(row=1, column=0, sticky='w', pady=2)
+        delay_frame = ttk.Frame(msg_frame)
+        delay_frame.grid(row=1, column=1, sticky='w', padx=(10, 0), pady=2)
+        self.post_msg_delay_min = tk.DoubleVar(value=self.config.get('post_msg_delay_min', 1.0))
+        self.post_msg_delay_max = tk.DoubleVar(value=self.config.get('post_msg_delay_max', 1.0))
+        self.post_msg_random = tk.BooleanVar(value=self.config.get('post_msg_random', False))
+        ttk.Spinbox(delay_frame, from_=0, to=30, increment=0.5, textvariable=self.post_msg_delay_min, width=5).pack(side=tk.LEFT)
+        ttk.Label(delay_frame, text=" - ").pack(side=tk.LEFT)
+        ttk.Spinbox(delay_frame, from_=0, to=30, increment=0.5, textvariable=self.post_msg_delay_max, width=5).pack(side=tk.LEFT)
+        ttk.Label(delay_frame, text=" sec").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Checkbutton(delay_frame, text="Random", variable=self.post_msg_random).pack(side=tk.LEFT, padx=(10, 0))
+        
+        ttk.Label(msg_frame, text="Cycle delay:").grid(row=2, column=0, sticky='w', pady=2)
+        self.delay_var = tk.DoubleVar(value=self.config.get('global_delay', 13.0))
+        delay_min_frame = ttk.Frame(msg_frame)
+        delay_min_frame.grid(row=2, column=1, sticky='w', padx=(10, 0), pady=2)
+        ttk.Spinbox(delay_min_frame, from_=1, to=60, increment=0.5, textvariable=self.delay_var, width=5).pack(side=tk.LEFT)
+        ttk.Label(delay_min_frame, text=" min").pack(side=tk.LEFT, padx=(5, 0))
+        
+        self.random_var = tk.BooleanVar(value=self.config.get('random_mode', False))
+        ttk.Checkbutton(msg_frame, text="Random Messages", variable=self.random_var).grid(row=3, column=1, sticky='w', pady=2)
+        
+        ttk.Label(msg_frame, text="Message List:").grid(row=4, column=0, sticky='nw', pady=2)
+        self.message_list_text = scrolledtext.ScrolledText(msg_frame, width=35, height=3)
+        self.message_list_text.grid(row=4, column=1, sticky='w', padx=(10, 0), pady=2)
+        self.message_list_text.insert('1.0', '\n'.join(self.global_message_list))
+        
+        coord_frame = ttk.LabelFrame(main_container, text="Coordinates (Fallback)", padding="10")
+        coord_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(coord_frame, text="X:").pack(side=tk.LEFT)
+        self.x_var = tk.IntVar(value=self.config.get('global_x', 570))
+        ttk.Spinbox(coord_frame, from_=0, to=1920, textvariable=self.x_var, width=6).pack(side=tk.LEFT, padx=(5, 15))
+        
+        ttk.Label(coord_frame, text="Y:").pack(side=tk.LEFT)
+        self.y_var = tk.IntVar(value=self.config.get('global_y', 793))
+        ttk.Spinbox(coord_frame, from_=0, to=1080, textvariable=self.y_var, width=6).pack(side=tk.LEFT, padx=(5, 15))
+        
+        ttk.Button(coord_frame, text="Get Position", command=self.get_mouse_position).pack(side=tk.LEFT)
+        
+        ctrl_frame = ttk.Frame(main_container)
+        ctrl_frame.pack(pady=(0, 10))
+        
+        self.start_button = ttk.Button(ctrl_frame, text="START", command=self.start_bot, width=12)
+        self.start_button.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_button = ttk.Button(ctrl_frame, text="STOP", command=self.stop_bot, width=12, state='disabled')
+        self.stop_button.pack(side=tk.LEFT, padx=5)
+        
+        log_frame = ttk.LabelFrame(main_container, text="Log", padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=6)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.configure(state='disabled')
+        
+        self.scan_habbo_windows()
+        
+        if self.dark_mode:
+            self.root.after(100, self.toggle_dark_mode)
+    
+    def get_message_list(self):
+        messages = self.message_list_text.get('1.0', tk.END).strip().split('\n')
+        return [msg.strip() for msg in messages if msg.strip()]
+    
+    def toggle_dark_mode(self):
+        self.dark_mode = self.dark_mode_var.get()
+        self.save_config()
+        
+        theme = 'dark' if self.dark_mode else 'light'
+        colors = self.colors[theme]
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background=colors['bg'])
+        style.configure('TLabel', background=colors['bg'], foreground=colors['label_fg'])
+        style.configure('TButton', background=colors['button_bg'], foreground=colors['button_fg'])
+        style.configure('TCheckbutton', background=colors['bg'], foreground=colors['fg'])
+        style.configure('TRadiobutton', background=colors['bg'], foreground=colors['fg'])
+        style.configure('TLabelframe', background=colors['frame_bg'], foreground=colors['label_fg'])
+        style.configure('TLabelframe.Label', background=colors['frame_bg'], foreground=colors['label_fg'])
+        
+        self.root.configure(bg=colors['bg'])
+        
+        for widget in self.root.winfo_children():
+            self.update_widget_colors(widget, colors)
+    
+    def update_widget_colors(self, widget, colors):
+        try:
+            widget_class = widget.winfo_class()
+            
+            if widget_class in ('Frame', 'Canvas'):
+                widget.configure(bg=colors['bg'])
+            elif widget_class == 'Label':
+                widget.configure(bg=colors['bg'], fg=colors['label_fg'])
+            elif widget_class == 'Entry':
+                widget.configure(bg=colors['entry_bg'], fg=colors['entry_fg'], insertbackground=colors['entry_fg'])
+            elif widget_class == 'Text':
+                widget.configure(bg=colors['text_bg'], fg=colors['text_fg'], insertbackground=colors['text_fg'])
+            elif widget_class == 'Scrollbar':
+                widget.configure(bg=colors['button_bg'])
+            
+            for child in widget.winfo_children():
+                self.update_widget_colors(child, colors)
+        except:
+            pass
+    
+    def apply_scale(self):
+        try:
+            scale = self.scale_var.get()
+            if scale < 0.5 or scale > 2.0:
+                messagebox.showwarning("Invalid Scale", "Scale must be between 0.5 and 2.0")
+                return
+            
+            self.root.tk.call('tk', 'scaling', scale)
+            self.save_config()
+            
+            try:
+                self.root.unbind_all("<MouseWheel>")
+            except:
+                pass
+            
+            for widget in self.root.winfo_children():
+                widget.destroy()
+            
+            self.ui_scale = scale
+            self.create_widgets()
+            
+            self.log_message(f"UI scale applied: {scale:.1f}")
+        except Exception as e:
+            self.log_message(f"Could not apply scale: {e}")
+    
+    def toggle_window_expanded(self, idx):
+        if idx in self.expanded_windows:
+            self.expanded_windows.discard(idx)
+        else:
+            self.expanded_windows.add(idx)
+        self.scan_habbo_windows()
+    
+    def scan_habbo_windows(self):
+        try:
+            old_settings = {wi['title']: wi for wi in self.habbo_windows}
+            
+            self.habbo_windows = []
+            self.window_vars = []
+            
+            for widget in self.window_list_frame.winfo_children():
+                widget.destroy()
+            
+            all_windows = self.gw.getAllWindows()
+            window_count = 0
+
+            for window in all_windows:
+                if window.title:
+                    title_lower = window.title.lower()
+                    if any(keyword in title_lower for keyword in ['habbo', 'flash', 'player']):
+                        var = tk.BooleanVar(value=True)
+                        self.window_vars.append(var)
+
+                        window_key = window.title
+                        saved_coords = self.window_coords.get(window_key, {})
+                        coord_text = f"({saved_coords.get('x', '?')}, {saved_coords.get('y', '?')})" if saved_coords else "(Not set)"
+                        
+                        old_wi = old_settings.get(window_key, {})
+                        settings = self.load_window_settings(window_key)
+                        
+                        if old_wi:
+                            settings['custom_message'] = old_wi.get('custom_message', tk.StringVar()).get()
+                            settings['use_custom'] = old_wi.get('use_custom', tk.BooleanVar()).get()
+                            settings['delay_after_prev'] = old_wi.get('delay_after_prev', tk.DoubleVar()).get()
+                            settings['post_msg_delay_min'] = old_wi.get('post_msg_delay_min', tk.DoubleVar()).get()
+                            settings['post_msg_delay_max'] = old_wi.get('post_msg_delay_max', tk.DoubleVar()).get()
+                            settings['post_msg_random'] = old_wi.get('post_msg_random', tk.BooleanVar()).get()
+
+                        frame = ttk.Frame(self.window_list_frame)
+                        frame.pack(anchor='w', padx=5, pady=2, fill=tk.X)
+                        
+                        top_row = ttk.Frame(frame)
+                        top_row.pack(fill=tk.X)
+                        
+                        checkbox = ttk.Checkbutton(top_row, text=f"{window.title} - {coord_text}", variable=var, onvalue=True, offvalue=False)
+                        checkbox.pack(side=tk.LEFT)
+                        
+                        set_btn = ttk.Button(top_row, text="Set", width=4, command=lambda w=window: self.set_coordinate_for_window(w))
+                        set_btn.pack(side=tk.LEFT, padx=(10, 0))
+                        
+                        exp_btn = ttk.Button(top_row, text="[+]", width=3, command=lambda i=window_count: self.toggle_window_expanded(i))
+                        exp_btn.pack(side=tk.LEFT, padx=(5, 0))
+                        
+                        custom_message_var = tk.StringVar(value=settings['custom_message'])
+                        use_custom_var = tk.BooleanVar(value=settings['use_custom'])
+                        delay_offset_var = tk.DoubleVar(value=settings['delay_after_prev'])
+                        post_msg_min_var = tk.DoubleVar(value=settings['post_msg_delay_min'])
+                        post_msg_max_var = tk.DoubleVar(value=settings['post_msg_delay_max'])
+                        post_msg_random_var = tk.BooleanVar(value=settings['post_msg_random'])
+                        dropdown_var = tk.StringVar()
+                        
+                        msg_list = self.get_message_list()
+                        if msg_list:
+                            dropdown_var.set(msg_list[0])
+                        
+                        wi_data = {
+                            'handle': window._hWnd,
+                            'title': window.title,
+                            'window': window,
+                            'coords': saved_coords,
+                            'custom_message': custom_message_var,
+                            'use_custom': use_custom_var,
+                            'delay_after_prev': delay_offset_var,
+                            'post_msg_delay_min': post_msg_min_var,
+                            'post_msg_delay_max': post_msg_max_var,
+                            'post_msg_random': post_msg_random_var,
+                            'msg_dropdown_var': dropdown_var,
+                            'frame': frame,
+                            'top_row': top_row,
+                            'exp_btn': exp_btn
+                        }
+                        
+                        if window_count in self.expanded_windows:
+                            exp_btn.configure(text="[-]")
+                            self.create_expanded_row(wi_data, msg_list)
+                        
+                        self.habbo_windows.append(wi_data)
+                        window_count += 1
+
+            self.window_count_label.config(text=f"Detected: {window_count} windows")
+
+            if self.habbo_windows:
+                self.log_message(f"Found {window_count} Habbo window(s)")
+            else:
+                self.log_message("No Habbo windows found")
+
+        except Exception as e:
+            self.log_message(f"Error scanning: {str(e)}")
+    
+    def create_expanded_row(self, wi_data, msg_list):
+        exp_row = ttk.Frame(wi_data['frame'])
+        exp_row.pack(fill=tk.X, padx=20, pady=(2, 0))
+        
+        ttk.Checkbutton(exp_row, text="Custom:", variable=wi_data['use_custom']).pack(side=tk.LEFT)
+        
+        msg_frame = ttk.Frame(exp_row)
+        msg_frame.pack(side=tk.LEFT, padx=(5, 10))
+        ttk.Combobox(msg_frame, textvariable=wi_data['msg_dropdown_var'], values=msg_list, width=10, state='readonly').pack(side=tk.LEFT)
+        
+        ttk.Label(exp_row, text="Entry:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Entry(exp_row, textvariable=wi_data['custom_message'], width=8).pack(side=tk.LEFT, padx=(2, 10))
+        
+        ttk.Label(exp_row, text="Start offset:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Spinbox(exp_row, from_=0, to=30, increment=0.5, textvariable=wi_data['delay_after_prev'], width=5).pack(side=tk.LEFT, padx=(2, 10))
+        ttk.Label(exp_row, text="sec").pack(side=tk.LEFT)
+        
+        ttk.Label(exp_row, text="Post-msg:").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Spinbox(exp_row, from_=0, to=30, increment=0.5, textvariable=wi_data['post_msg_delay_min'], width=4).pack(side=tk.LEFT, padx=(2, 0))
+        ttk.Label(exp_row, text="-").pack(side=tk.LEFT)
+        ttk.Spinbox(exp_row, from_=0, to=30, increment=0.5, textvariable=wi_data['post_msg_delay_max'], width=4).pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Label(exp_row, text="s").pack(side=tk.LEFT)
+        ttk.Checkbutton(exp_row, text="Rnd", variable=wi_data['post_msg_random']).pack(side=tk.LEFT, padx=(5, 0))
+    
+    def set_coordinate_for_window(self, window):
+        self.log_message(f"Setting coords for: {window.title}")
+        self.log_message("Move mouse to chat box in 3 seconds...")
+        
+        try:
+            self.win32gui.ShowWindow(window._hWnd, self.win32con.SW_RESTORE)
+            self.win32gui.SetForegroundWindow(window._hWnd)
+            time.sleep(1)
+        except:
+            self.log_message("Could not activate window")
+            return
+        
+        time.sleep(3)
+        x, y = pyautogui.position()
+        
+        window_key = window.title
+        self.window_coords[window_key] = {'x': x, 'y': y}
+        self.save_config()
+        
+        self.log_message(f"Coords saved: X={x}, Y={y}")
+        self.scan_habbo_windows()
+    
+    def set_coordinates_for_selected(self):
+        selected_indices = [i for i, var in enumerate(self.window_vars) if var.get()]
+        
+        if not selected_indices:
+            messagebox.showwarning("No Selection", "No windows selected!")
+            return
+        
+        self.log_message(f"Setting coords for {len(selected_indices)} windows...")
+        
+        for i, idx in enumerate(selected_indices):
+            if idx < len(self.habbo_windows):
+                window_info = self.habbo_windows[idx]
+                messagebox.showinfo("Set Coordinates", 
+                    f"Position mouse for: {window_info['title']}\n\nClick OK, then wait 3 seconds.")
+                self.set_coordinate_for_window(window_info['window'])
+    
+    def select_all_windows(self):
+        for var in self.window_vars:
+            var.set(True)
+        self.log_message("All windows selected")
+    
+    def deselect_all_windows(self):
+        for var in self.window_vars:
+            var.set(False)
+        self.log_message("All windows deselected")
+    
+    def log_message(self, message):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_line = f"[{timestamp}] {message}"
+        
+        self.log_text.configure(state='normal')
+        self.log_text.insert(tk.END, log_line + "\n")
+        self.log_text.configure(state='disabled')
+        self.log_text.see(tk.END)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        print(log_line)
+    
+    def get_mouse_position(self):
+        self.log_message("Move mouse to chat box in 3 seconds...")
+        time.sleep(3)
+        x, y = pyautogui.position()
+        self.x_var.set(x)
+        self.y_var.set(y)
+        self.log_message(f"Position saved: X={x}, Y={y}")
+        self.save_config()
+    
+    def activate_window(self, window_info):
+        try:
+            self.win32gui.ShowWindow(window_info['handle'], self.win32con.SW_RESTORE)
+            self.win32gui.SetForegroundWindow(window_info['handle'])
+            time.sleep(0.3)
+            return True
+        except:
+            return False
+
+    def get_selected_windows(self):
+        windows_to_use = []
+        for window_info, var in zip(self.habbo_windows, self.window_vars):
+            if self.mode_var.get() == "all" or var.get():
+                windows_to_use.append(window_info)
+        return windows_to_use
+
+    def get_post_msg_delay(self, window_info):
+        use_random = window_info.get('post_msg_random', tk.BooleanVar()).get() or self.post_msg_random.get()
+        if use_random:
+            min_val = window_info.get('post_msg_delay_min', tk.DoubleVar()).get()
+            max_val = window_info.get('post_msg_delay_max', tk.DoubleVar()).get()
+            if min_val == max_val:
+                return min_val
+            return random.uniform(min_val, max_val)
+        return window_info.get('post_msg_delay_min', tk.DoubleVar()).get()
+
+    def get_message_for_window(self, window_info):
+        if window_info.get('use_custom', tk.BooleanVar()).get():
+            custom_msg = window_info.get('custom_message', tk.StringVar()).get().strip()
+            if custom_msg:
+                return custom_msg
+            dropdown_msg = window_info.get('msg_dropdown_var', tk.StringVar()).get().strip()
+            if dropdown_msg:
+                return dropdown_msg
+        if self.random_var.get():
+            messages = self.get_message_list()
+            if messages:
+                return random.choice(messages)
+        return self.message_var.get()
+    
+    def get_coordinates_for_window(self, window_info):
+        window_key = window_info['title']
+        if window_key in self.window_coords:
+            coords = self.window_coords[window_key]
+            if 'x' in coords and 'y' in coords:
+                return coords['x'], coords['y']
+        return self.x_var.get(), self.y_var.get()
+    
+    def bot_worker(self):
+        cycle_count = 0
+        
+        while self.is_running:
+            try:
+                cycle_count += 1
+                windows_to_use = self.get_selected_windows()
+                
+                if not windows_to_use:
+                    self.log_message("No windows selected")
+                    time.sleep(5)
+                    continue
+                
+                self.log_message(f"Cycle #{cycle_count} - {len(windows_to_use)} window(s)")
+                
+                for i, window_info in enumerate(windows_to_use):
+                    if not self.is_running:
+                        break
+                    
+                    if i > 0:
+                        offset = window_info.get('delay_after_prev', tk.DoubleVar()).get()
+                        if offset > 0:
+                            self.log_message(f"  Window offset {offset}s before {window_info['title']}")
+                            time.sleep(offset)
+                    
+                    try:
+                        self.log_message(f"  {window_info['title']}")
+                        
+                        if not self.activate_window(window_info):
+                            self.log_message(f"    Failed to activate")
+                            continue
+                        
+                        x, y = self.get_coordinates_for_window(window_info)
+                        
+                        time.sleep(random.uniform(0.2, 0.5))
+                        pyautogui.click(x, y)
+                        time.sleep(random.uniform(0.1, 0.3))
+                        
+                        message = self.get_message_for_window(window_info)
+                        self.log_message(f"    '{message}'")
+                        
+                        pyautogui.write(message)
+                        time.sleep(random.uniform(0.2, 0.4))
+                        pyautogui.press('enter')
+                        
+                        post_delay = self.get_post_msg_delay(window_info)
+                        if post_delay > 0:
+                            time.sleep(post_delay)
+                        
+                    except Exception as e:
+                        self.log_message(f"    Error: {str(e)}")
+                
+                if not self.is_running:
+                    break
+                    
+                delay_minutes = self.delay_var.get()
+                delay_seconds = delay_minutes * 60
+
+                self.log_message(f"Cycle #{cycle_count} done. Next in {delay_minutes} min...")
+                
+                remaining = delay_seconds
+                while remaining > 0 and self.is_running:
+                    time.sleep(1)
+                    remaining -= 1
+
+                    if remaining % 30 == 0 and remaining > 0:
+                        self.log_message(f"  {remaining // 60}:{remaining % 60:02d} remaining")
+                
+            except Exception as e:
+                self.log_message(f"Bot error: {str(e)}")
+                time.sleep(5)
+        
+        self.log_message("Bot stopped")
+    
+    def start_bot(self):
+        if not self.habbo_windows:
+            messagebox.showwarning("No Windows", "No Habbo windows found. Please scan first!")
+            return
+        
+        windows_to_use = self.get_selected_windows()
+        if not windows_to_use:
+            messagebox.showwarning("No Selection", "No windows selected!")
+            return
+        
+        self.save_config()
+        
+        self.is_running = True
+        self.status_label.config(text="Status: RUNNING", foreground='green')
+        self.start_button.config(state='disabled')
+        self.stop_button.config(state='normal')
+        
+        self.log_message("=" * 40)
+        self.log_message("BOT STARTED")
+        self.log_message(f"Mode: {self.mode_var.get().upper()}")
+        self.log_message(f"Windows: {len(windows_to_use)}")
+        self.log_message(f"Cycle delay: {self.delay_var.get()} min")
+        self.log_message(f"Random: {'ON' if self.random_var.get() else 'OFF'}")
+        self.log_message("=" * 40)
+        
+        self.bot_thread = threading.Thread(target=self.bot_worker, daemon=True)
+        self.bot_thread.start()
+    
+    def stop_bot(self):
+        self.is_running = False
+        self.status_label.config(text="Status: STOPPED", foreground='red')
+        self.start_button.config(state='normal')
+        self.stop_button.config(state='disabled')
+        
+        self.log_message("Bot stopping...")
+        
+        if self.bot_thread and self.bot_thread.is_alive():
+            self.bot_thread.join(timeout=2)
+
+def main():
+    root = tk.Tk()
+    
+    try:
+        root.iconbitmap('icon.ico')
+    except:
+        pass
+    
+    app = HabboMultiboxBotGUI(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
