@@ -6,7 +6,7 @@ Download the latest release
 
 Open the exe after you opened Habbo
 
-Press enter in the Terminal window while hovering over the Habbo client chat bar to grab coordinates
+Press enter in the Terminal window while hovering over the Habbo client chat bar with your mouse to grab coordinates
 
 It will send a message in chat all 14-15 mins
 
