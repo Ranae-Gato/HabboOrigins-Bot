@@ -1,0 +1,151 @@
+"""
+Build Script for Ranaes AFK Shop Bot
+This script creates an executable with optional console window.
+"""
+
+import os
+import sys
+import subprocess
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+def build_exe(with_console=True):
+    """Build the executable with PyInstaller"""
+    
+    script_name = "HabboBotGUI.py"  # Your main script filename
+    output_name = "Ranaes_AFK_Shop_Bot"
+    
+    # Check if script exists
+    if not os.path.exists(script_name):
+        print(f"❌ Error: {script_name} not found!")
+        print(f"   Make sure this build script is in the same folder as {script_name}")
+        return False
+    
+    # Base command
+    cmd = [
+        "pyinstaller",
+        "--onefile",
+        "--name", output_name,
+        "--hidden-import=pyautogui",
+        "--hidden-import=pygetwindow",
+        "--hidden-import=win32gui",
+        "--hidden-import=win32con",
+        "--hidden-import=pypiwin32",
+        "--icon=NONE",  # You can add an icon file if you have one
+        "--clean",  # Clean PyInstaller cache
+    ]
+    
+    # Add console option
+    if not with_console:
+        cmd.append("--noconsole")
+        print("Building WITHOUT console window...")
+    else:
+        print("Building WITH console window...")
+    
+    # Add your script
+    cmd.append(script_name)
+    
+    # Print the command
+    print("\nRunning command:")
+    print(" ".join(cmd))
+    print("\n" + "="*50 + "\n")
+    
+    # Run the command
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print(result.stdout)
+        if result.stderr:
+            print("Warnings/Errors:", result.stderr)
+            
+        print("\n" + "="*50)
+        
+        if with_console:
+            print(f"✅ Build complete! Executable created in 'dist' folder:")
+            print(f"   dist/{output_name}.exe")
+            print("\nNote: Console window will be visible for debugging.")
+        else:
+            print(f"✅ Build complete! Executable created in 'dist' folder:")
+            print(f"   dist/{output_name}.exe")
+            print("\nNote: Console window is hidden.")
+            
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Build failed!")
+        print(f"Error output: {e.stderr}")
+        return False
+    except FileNotFoundError:
+        print("❌ PyInstaller not found. Install it with: pip install pyinstaller")
+        return False
+    
+    return True
+
+def create_gui():
+    """Create a simple GUI for building the executable"""
+    root = tk.Tk()
+    root.title("Build Ranaes AFK Shop Bot")
+    root.geometry("400x200")
+    
+    def build_with_console():
+        root.destroy()
+        build_exe(with_console=True)
+    
+    def build_without_console():
+        root.destroy()
+        build_exe(with_console=False)
+    
+    # Title
+    title_label = ttk.Label(root, text="Build Executable", font=('Arial', 16, 'bold'))
+    title_label.pack(pady=20)
+    
+    # Instructions
+    info_label = ttk.Label(root, text="Choose console option:", font=('Arial', 10))
+    info_label.pack(pady=10)
+    
+    # Buttons frame
+    button_frame = ttk.Frame(root)
+    button_frame.pack(pady=20)
+    
+    # With console button
+    console_btn = ttk.Button(button_frame, text="With Console (Debug)", 
+                            command=build_with_console, width=25)
+    console_btn.pack(pady=5)
+    
+    # Without console button
+    noconsole_btn = ttk.Button(button_frame, text="Without Console (Clean)", 
+                              command=build_without_console, width=25)
+    noconsole_btn.pack(pady=5)
+    
+    # Info
+    info_text = ttk.Label(root, text="Console: Shows debug messages\nNo Console: Clean GUI only", 
+                         font=('Arial', 9))
+    info_text.pack(pady=10)
+    
+    root.mainloop()
+
+if __name__ == "__main__":
+    print("="*50)
+    print("Ranaes AFK Shop Bot - Build Utility")
+    print("="*50)
+    
+    # Check if running in GUI mode or command line
+    if len(sys.argv) > 1:
+        # Command line mode
+        if sys.argv[1].lower() in ['--noconsole', '-n']:
+            build_exe(with_console=False)
+        elif sys.argv[1].lower() in ['--console', '-c']:
+            build_exe(with_console=True)
+        elif sys.argv[1].lower() in ['--help', '-h']:
+            print("\nUsage:")
+            print("  python build_exe.py [OPTION]")
+            print("\nOptions:")
+            print("  -c, --console    Build WITH console window (default)")
+            print("  -n, --noconsole  Build WITHOUT console window")
+            print("  -g, --gui        Show GUI build selector")
+            print("  -h, --help       Show this help message")
+        elif sys.argv[1].lower() in ['--gui', '-g']:
+            create_gui()
+        else:
+            print(f"Unknown option: {sys.argv[1]}")
+            print("Use --help for available options")
+    else:
+        # Show GUI by default
+        create_gui()
